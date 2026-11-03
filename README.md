@@ -4,7 +4,7 @@
 
 ## Запуск
 
-Docker Desktop: вільні порти `8080`, `4000`, `5433`.
+Docker Desktop: порти `8080`, `4000`, `5433`.
 
 ```bash
 docker compose up -d --build                     
