@@ -1,5 +1,3 @@
-# TagShop Video — моніторинг роботи з БД
-
 **TagShop Video** — робочий застосунок: відео з товарними тегами на таймкодах (Node.js API + PostgreSQL).
 У межах лабораторної імплементовано генерацію даних, збір метрик, логів і трейсів, авторизацію,
 обмін повідомленнями та запуск усього в Docker.
@@ -87,7 +85,7 @@ loadgen/        Python: seed.py, load.py, check.py
 auth-service/   Python: сервер авторизації (FastAPI + SQLite)
 gateway/        nginx: вхід у моніторинг
 monitoring/     конфіги Prometheus, Grafana (дашборди), Loki, Tempo, Alloy, RabbitMQ
-app-web/        фронтенд застосунку (для перевірки не потрібен)
+app-web/        фронтенд застосунку
 ```
 
 ## Необов'язково
