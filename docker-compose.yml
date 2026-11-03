@@ -1,0 +1,307 @@
+name: tagshop
+
+# Port map
+#   `ports: "HOST:CONTAINER"` publishes a container port on the host machine. Only these
+#   four are reachable from outside Docker:
+#     localhost:8080 -> gateway:80      monitoring entry: login, /grafana/, /prometheus/, /rabbitmq/
+#     localhost:4000 -> api:4000        public TagShop API (the data source)
+#     localhost:5433 -> postgres:5432   DB for host tools (host 5432 is often a local PostgreSQL)
+#     localhost:3000 -> web:3000        frontend, only with `--profile web`
+#   `expose:` only documents ports a container listens on for other containers. They are
+#   NOT published: reachable solely by service name inside the compose network
+#   (e.g. prometheus:9090, rabbitmq:5672). Grafana, Prometheus, Loki, Tempo, RabbitMQ and
+#   the auth server are internal on purpose, so the gateway's authorization cannot be bypassed.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tagshop
+      POSTGRES_PASSWORD: tagshop
+      POSTGRES_DB: tagshop
+    ports:
+      # Host port 5433: 5432 is often taken by a locally installed PostgreSQL.
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tagshop -d tagshop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./app-api
+    restart: unless-stopped
+    # Optional secrets (S3_*, SMTP_*, GOOGLE_CLIENT_ID) from app-api/.env; the stack
+    # runs without the file (uploads are then disabled). Values below override it.
+    env_file:
+      - path: ./app-api/.env
+        required: false
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgres://tagshop:tagshop@postgres:5432/tagshop
+      FRONTEND_URL: http://localhost:3000
+      OTEL_SERVICE_NAME: tagshop-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      RABBITMQ_URL: amqp://tagshop:tagshop@rabbitmq:5672
+    ports:
+      - "4000:4000"     # HTTP API, public
+    expose:
+      - "9464"          # /metrics for Prometheus (internal only)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: tagshop
+      RABBITMQ_DEFAULT_PASS: tagshop
+    expose:
+      - "5672"          # AMQP: api publishes, worker consumes
+      - "15672"         # management UI, via gateway /rabbitmq/ (admin only)
+      - "15692"         # Prometheus metrics
+    volumes:
+      # management UI (behind the gateway at /rabbitmq/) + Prometheus endpoint (:15692)
+      - ./monitoring/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./monitoring/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-tagshop.conf:ro
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Consumes analytics.events and email.send; same image as the API.
+  worker:
+    build: ./app-api
+    restart: unless-stopped
+    command: ["node", "--import", "./src/instrumentation.ts", "src/worker.ts"]
+    env_file:
+      - path: ./app-api/.env
+        required: false
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://tagshop:tagshop@postgres:5432/tagshop
+      RABBITMQ_URL: amqp://tagshop:tagshop@rabbitmq:5672
+      OTEL_SERVICE_NAME: tagshop-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+    expose:
+      - "9100"          # /metrics for Prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # Optional (not needed for the monitoring lab): docker compose --profile web up -d
+  web:
+    profiles: ["web"]
+    build:
+      context: ./app-web
+      args:
+        # Inlined into the browser bundle at build time — must be reachable from the host.
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api
+    restart: unless-stopped
+    environment:
+      # Server-side rendering runs inside the container, where localhost is not the API.
+      API_INTERNAL_URL: http://api:4000/api
+    ports:
+      - "3000:3000"     # frontend (optional profile)
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # One-off DB seeding on every `up`; idempotent (skips if already seeded).
+  seed:
+    build: ./loadgen
+    command: ["python", "seed.py"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://tagshop:tagshop@postgres:5432/tagshop
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Continuous API traffic. Requirements self-check: docker compose run --rm loadgen python check.py
+  loadgen:
+    build: ./loadgen
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:4000/api
+      DATABASE_URL: postgresql://tagshop:tagshop@postgres:5432/tagshop
+      LOAD_RPS: "5"
+      LOAD_WORKERS: "4"
+      # Used by check.py to sign in through the gateway.
+      MONITORING_ADMIN_PASSWORD: ${MONITORING_ADMIN_PASSWORD:-admin12345}
+      MONITORING_VIEWER_PASSWORD: ${MONITORING_VIEWER_PASSWORD:-viewer12345}
+    expose:
+      - "8000"          # /metrics for Prometheus
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://tagshop:tagshop@postgres:5432/tagshop?sslmode=disable
+    expose:
+      - "9187"          # PostgreSQL metrics for Prometheus
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      # Built-in time series database (TSDB): on-disk blocks kept for 15 days.
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+      # Accepts span-metrics / service-graph series pushed by Tempo.
+      - --web.enable-remote-write-receiver
+      # UI links point at the gateway path; the server itself still listens on /.
+      - --web.external-url=http://localhost:8080/prometheus/
+      - --web.route-prefix=/
+    expose:
+      - "9090"          # UI/API: Grafana datasource; humans via gateway /prometheus/ (admin only)
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+      - postgres-exporter
+
+  loki:
+    image: grafana/loki:3.5.3
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yml
+    expose:
+      - "3100"          # push API (alloy) and query API (Grafana)
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+
+  tempo:
+    image: grafana/tempo:2.8.1
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo.yml
+    expose:
+      - "3200"          # query API (Grafana)
+      - "4317"          # OTLP gRPC
+      - "4318"          # OTLP HTTP: traces from api, worker, auth-service
+    volumes:
+      - ./monitoring/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+
+  # Log shipper: reads container logs through the Docker socket and pushes them to Loki.
+  alloy:
+    image: grafana/alloy:v1.10.0
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      # Only this project's containers are collected (see config.alloy).
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-tagshop}
+    expose:
+      - "12345"         # Alloy debug UI
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    environment:
+      # Served at http://localhost:8080/grafana/ behind the gateway.
+      GF_SERVER_ROOT_URL: http://localhost:8080/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # Identity comes from the gateway (auth-service), not from Grafana's own login.
+      # Safe only because Grafana has no published port: the gateway is the sole way in.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_HEADERS: Role:X-WEBAUTH-ROLE
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_SYNC_TTL: "1"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_SIGNOUT_REDIRECT_URL: /auth/logout
+      GF_SECURITY_ADMIN_USER: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tagshop-api.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    expose:
+      - "3000"          # via gateway /grafana/ only (trusts X-WEBAUTH-* headers)
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+  # Authorization server for the monitoring stack (FastAPI + SQLite).
+  auth-service:
+    build: ./auth-service
+    restart: unless-stopped
+    environment:
+      ADMIN_USERNAME: admin
+      # Demo defaults; override in .env (applied only when the auth database is empty).
+      ADMIN_PASSWORD: ${MONITORING_ADMIN_PASSWORD:-admin12345}
+      VIEWER_USERNAME: viewer
+      VIEWER_PASSWORD: ${MONITORING_VIEWER_PASSWORD:-viewer12345}
+      OTEL_SERVICE_NAME: auth-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+    expose:
+      - "8000"          # /verify for nginx auth_request, /login pages, /metrics
+    volumes:
+      - auth_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # Single published entry point for monitoring: http://localhost:8080
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"       # the only way into the monitoring stack
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      grafana:
+        condition: service_started
+
+volumes:
+  pg_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  tempo_data:
+  rabbitmq_data:
+  auth_data:

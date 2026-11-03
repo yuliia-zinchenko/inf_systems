@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /create
+Disallow: /videos/
+Disallow: /verify-email/
+Disallow: /reset-password/
+Disallow: /forgot-password
+Disallow: /signin
+Disallow: /signup

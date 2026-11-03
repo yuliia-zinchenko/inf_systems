@@ -1,0 +1,48 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Node.js API: HTTP latency, DB query latency, pool, business counters.
+  - job_name: tagshop-api
+    metrics_path: /metrics
+    static_configs:
+      # Internal metrics port, not published to the host.
+      - targets: ["api:9464"]
+
+  # Python auth-service: login attempts, auth_request checks, users by role.
+  - job_name: auth-service
+    static_configs:
+      - targets: ["auth-service:8000"]
+
+  # Queue worker: processed messages by outcome, processing latency.
+  - job_name: tagshop-worker
+    static_configs:
+      - targets: ["worker:9100"]
+
+  # RabbitMQ built-in rabbitmq_prometheus plugin: node-wide totals...
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  # ...and per-queue depth / consumers.
+  - job_name: rabbitmq-queues
+    metrics_path: /metrics/detailed
+    params:
+      family: [queue_coarse_metrics, queue_consumer_count]
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  # Python load generator: requests sent and latency as seen by the client.
+  - job_name: loadgen
+    static_configs:
+      - targets: ["loadgen:8000"]
+
+  # PostgreSQL server statistics (pg_stat_database, pg_stat_user_tables, locks, sizes).
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

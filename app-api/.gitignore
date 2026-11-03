@@ -1,0 +1,67 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.next/
+# testing
+/coverage
+
+# production
+/build
+
+# misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.vercel
+.firebase/
+.local-config
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/test-screenshots/
+
+# Playwright auth state (generated)
+/playwright/.auth/
+/.auth/
+
+# E2E test environment (contains local paths)
+.env.test
+PR_SUMMARY.md
+receiver-headshot.jpg
+sender-headshot.jpg
+.vscode/settings.json
+receiver-headshot-call.jpg
+sender-headshot-call.jpg
+stripe-iframe-failure.png
+tests/test-agent/test-config.json
+receiver-headshot-request.jpg
+sender-headshot-request.jpg
+tests/test-agent/test-config.json
+tests/test-agent/test-config.json
+
+.worktrees/
+
+.next
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+.cursor/*.log
+
+.env
+docs/superpowers/

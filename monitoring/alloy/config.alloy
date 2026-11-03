@@ -1,0 +1,77 @@
+// Collects stdout/stderr of every container in this compose project
+// (COMPOSE_PROJECT, set in docker-compose.yml) and ships it to Loki with
+// `service` and `level` labels.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + coalesce(sys.env("COMPOSE_PROJECT"), "tagshop")]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.levels.receiver]
+}
+
+loki.process "levels" {
+  // Our services (pino in Node, JSON in Python) log one JSON object per line.
+  stage.match {
+    selector = "{service=~\"api|worker|auth-service\"}"
+
+    stage.json {
+      expressions = { level = "level", trace_id = "trace_id" }
+    }
+
+    stage.structured_metadata {
+      values = { trace_id = "" }
+    }
+  }
+
+  // Grafana stack components log in logfmt (level=info ...). Alloy itself is
+  // left out so a parse error in its own log cannot feed back into the pipeline.
+  stage.match {
+    selector = "{service=~\"prometheus|grafana|loki|tempo|postgres-exporter\"}"
+
+    stage.logfmt {
+      mapping = { level = "" }
+    }
+  }
+
+  // postgres-exporter writes INFO/WARN; keep one spelling per level.
+  stage.template {
+    source   = "level"
+    template = "{{ ToLower .Value }}"
+  }
+
+  stage.labels {
+    values = { level = "" }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
