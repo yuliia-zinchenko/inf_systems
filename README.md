@@ -28,16 +28,16 @@ docker compose run --rm loadgen python check.py   # автоматична пе�
 
 | # | Вимога | Реалізація | Де в проєкті |
 |---|---|---|---|
-| 0 | СУБД у Docker | PostgreSQL 16 у контейнері; схема створюється міграціями під час старту API | `docker-compose.yml` → `postgres`, `app-api/migrations/` |
-| 1 | Генерація та актуалізація даних (Python) | `seed.py` наповнює БД напряму через psycopg (користувачі, відео, товарні теги, ~37 тис. подій). `load.py` безперервно імітує глядачів і авторів через API (~5 дій/с): створення, редагування, видалення, перегляди, кліки | `loadgen/` |
-| 2 | Збір даних: Prometheus | 8 джерел метрик: API (HTTP, час SQL-запитів, пул з'єднань), worker, PostgreSQL через `postgres_exporter`, RabbitMQ, auth-service, генератор | `monitoring/prometheus/prometheus.yml`, `app-api/src/application/metrics.ts` |
-| 3 | Time Series Storage | Вбудована TSDB Prometheus на volume `prometheus_data`, зберігання 15 днів | `docker-compose.yml` → `prometheus` |
-| 4 | Відображення: Grafana | 5 дашбордів у папці TagShop: **PostgreSQL** (з'єднання, TPS, cache hit, рядки й розмір таблиць, час SQL), API, RabbitMQ, бізнес-метрики, логи. Джерела даних і дашборди підключаються автоматично | `monitoring/grafana/` |
-| 5 | Логи: Grafana Loki | Усі сервіси пишуть структуровані JSON-логи; Grafana Alloy збирає логи всіх контейнерів у Loki. Кожен рядок містить `trace_id` із посиланням на трейс | `monitoring/loki/`, `monitoring/alloy/`, `app-api/src/application/logger.ts` |
-| 6 | Трейси: Grafana Tempo | OpenTelemetry в API, worker і auth-service; окремий спан на кожен SQL-запит. Один трейс проходить шлях API → RabbitMQ → worker → `INSERT` | `monitoring/tempo/`, `app-api/src/instrumentation.ts` |
-| 7 | Авторизація (Python + SQLite) | Сервер авторизації на FastAPI, користувачі й ролі в SQLite. Ролі `admin` (усе) і `viewer` (лише Grafana); блокування після 5 невдалих спроб входу. nginx пропускає до моніторингу тільки з дійсною сесією | `auth-service/`, `gateway/nginx.conf` |
-| 8 | Контейнеризація | 14 сервісів в одному `docker-compose.yml`; запуск однією командою без додаткових налаштувань | `docker-compose.yml`, `*/Dockerfile` |
-| 9 | Обмін повідомленнями: RabbitMQ | API публікує події переглядів і листи в черги `analytics.events` та `email.send`, окремий `worker` обробляє їх і пише в БД. Невдалі повідомлення потрапляють у `*.dlq`; якщо брокер недоступний, API обробляє подію сам | `app-api/src/messaging/`, `app-api/src/worker.ts` |
+| 1 | СУБД у Docker | PostgreSQL 16 у контейнері; схема створюється міграціями під час старту API | `docker-compose.yml` → `postgres`, `app-api/migrations/` |
+| 2 | Генерація та актуалізація даних (Python) | `seed.py` наповнює БД напряму через psycopg (користувачі, відео, товарні теги, ~37 тис. подій). `load.py` безперервно імітує глядачів і авторів через API (~5 дій/с): створення, редагування, видалення, перегляди, кліки | `loadgen/` |
+| 3 | Збір даних: Prometheus | 8 джерел метрик: API (HTTP, час SQL-запитів, пул з'єднань), worker, PostgreSQL через `postgres_exporter`, RabbitMQ, auth-service, генератор | `monitoring/prometheus/prometheus.yml`, `app-api/src/application/metrics.ts` |
+| 4 | Time Series Storage | Вбудована TSDB Prometheus на volume `prometheus_data`, зберігання 15 днів | `docker-compose.yml` → `prometheus` |
+| 5 | Відображення: Grafana | 5 дашбордів у папці TagShop: **PostgreSQL** (з'єднання, TPS, cache hit, рядки й розмір таблиць, час SQL), API, RabbitMQ, бізнес-метрики, логи. Джерела даних і дашборди підключаються автоматично | `monitoring/grafana/` |
+| 6 | Логи: Grafana Loki | Усі сервіси пишуть структуровані JSON-логи; Grafana Alloy збирає логи всіх контейнерів у Loki. Кожен рядок містить `trace_id` із посиланням на трейс | `monitoring/loki/`, `monitoring/alloy/`, `app-api/src/application/logger.ts` |
+| 7 | Трейси: Grafana Tempo | OpenTelemetry в API, worker і auth-service; окремий спан на кожен SQL-запит. Один трейс проходить шлях API → RabbitMQ → worker → `INSERT` | `monitoring/tempo/`, `app-api/src/instrumentation.ts` |
+| 8 | Авторизація (Python + SQLite) | Сервер авторизації на FastAPI, користувачі й ролі в SQLite. Ролі `admin` (усе) і `viewer` (лише Grafana); блокування після 5 невдалих спроб входу. nginx пропускає до моніторингу тільки з дійсною сесією | `auth-service/`, `gateway/nginx.conf` |
+| 9 | Контейнеризація | 14 сервісів в одному `docker-compose.yml`; запуск однією командою без додаткових налаштувань | `docker-compose.yml`, `*/Dockerfile` |
+| 10 | Обмін повідомленнями: RabbitMQ | API публікує події переглядів і листи в черги `analytics.events` та `email.send`, окремий `worker` обробляє їх і пише в БД. Невдалі повідомлення потрапляють у `*.dlq`; якщо брокер недоступний, API обробляє подію сам | `app-api/src/messaging/`, `app-api/src/worker.ts` |
 
 ## Архітектура
 
@@ -65,7 +65,7 @@ docker compose run --rm loadgen python check.py   # автоматична пе�
 `ports: "ХОСТ:КОНТЕЙНЕР"` у `docker-compose.yml` відкриває порт контейнера на комп'ютері.
 Назовні опубліковано лише чотири порти:
 
-| Хост | → Контейнер | Призначення |
+| Хост | Контейнер | Призначення |
 |---|---|---|
 | `8080` | `gateway:80` | єдиний вхід у моніторинг (через авторизацію) |
 | `4000` | `api:4000` | API застосунку |
