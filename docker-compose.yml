@@ -5,7 +5,7 @@ name: tagshop
 #   four are reachable from outside Docker:
 #     localhost:8080 -> gateway:80      monitoring entry: login, /grafana/, /prometheus/, /rabbitmq/
 #     localhost:4000 -> api:4000        public TagShop API (the data source)
-#     localhost:5433 -> postgres:5432   DB for host tools (host 5432 is often a local PostgreSQL)
+#     localhost:55432 -> postgres:5432   DB for host tools (host 5432/5433 are often taken by other databases)
 #     localhost:3000 -> web:3000        frontend, only with `--profile web`
 #   `expose:` only documents ports a container listens on for other containers. They are
 #   NOT published: reachable solely by service name inside the compose network
@@ -21,8 +21,8 @@ services:
       POSTGRES_PASSWORD: tagshop
       POSTGRES_DB: tagshop
     ports:
-      # Host port 5433: 5432 is often taken by a locally installed PostgreSQL.
-      - "5433:5432"
+      # Host port 55432: 5432/5433 are often taken by a local PostgreSQL or other projects.
+      - "55432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -291,11 +291,84 @@ services:
       - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "8080:80"       # the only way into the monitoring stack
+    expose:
+      - "8081"          # [Додатково] stub_status for nginx-exporter (internal only)
     depends_on:
       auth-service:
         condition: service_healthy
       grafana:
         condition: service_started
+
+  # ======================================================================
+  # [Додатково] Alerting, host/container monitoring, nginx metrics
+  # ======================================================================
+
+  # Receives firing alerts from Prometheus, groups and routes them to receivers.
+  # UI: http://localhost:8080/alertmanager/ (admin only).
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=http://localhost:8080/alertmanager/
+      - --web.route-prefix=/
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    expose:
+      - "9093"          # API/UI: Prometheus pushes alerts, Grafana and gateway read them
+
+  # Alertmanager webhook receiver: logs each notification (Loki: {service="alert-logger"}).
+  alert-logger:
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: ["python", "-u", "/app/alert_logger.py"]
+    volumes:
+      - ./monitoring/alertmanager/alert_logger.py:/app/alert_logger.py:ro
+    expose:
+      - "8080"          # webhook endpoint for Alertmanager
+
+  # Host metrics: CPU, memory, disk, network of the machine running the containers
+  # (with Docker Desktop that is its Linux VM).
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    expose:
+      - "9100"          # /metrics for Prometheus
+
+  # Per-container CPU / memory / network, labelled by compose service, read from the
+  # Docker Engine API. (cAdvisor cannot name containers under Docker Desktop's
+  # containerd image store, hence this small exporter.)
+  container-exporter:
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: ["python", "-u", "/app/container_exporter.py"]
+    environment:
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-tagshop}
+    volumes:
+      - ./monitoring/container-exporter/container_exporter.py:/app/container_exporter.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "9200"          # /metrics for Prometheus
+
+  # Converts nginx stub_status (gateway:8081, internal) into Prometheus metrics.
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.4.1
+    restart: unless-stopped
+    command:
+      - --nginx.scrape-uri=http://gateway:8081/stub_status
+    expose:
+      - "9113"          # /metrics for Prometheus
+    depends_on:
+      - gateway
 
 volumes:
   pg_data:
@@ -305,3 +378,4 @@ volumes:
   tempo_data:
   rabbitmq_data:
   auth_data:
+  alertmanager_data:

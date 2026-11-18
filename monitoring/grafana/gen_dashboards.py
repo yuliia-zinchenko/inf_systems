@@ -266,4 +266,59 @@ lg.line([
 ], 10)
 lg.dump()
 
+# ---------------------------------------------------------------- [Додатково] System & alerts
+ALERT_ROWS = {
+    "type": "table", "title": "Активні та очікувані сповіщення",
+    "targets": [{"refId": "A", "datasource": DS, "expr": 'ALERTS{alertstate=~"firing|pending"}',
+                 "instant": True, "range": False, "format": "table"}],
+    "transformations": [{"id": "organize", "options": {
+        "excludeByName": {"Time": True, "Value": True, "__name__": True},
+        "indexByName": {"alertname": 0, "alertstate": 1, "severity": 2},
+        "renameByName": {"alertname": "Сповіщення", "alertstate": "Стан", "severity": "Важливість"}}}],
+    "fieldConfig": {"defaults": {}, "overrides": []}, "options": {"showHeader": True},
+}
+FIRING = [{"color": "green", "value": None}, {"color": "red", "value": 1}]
+
+sysb = Board("tagshop-system", "TagShop · Система та сповіщення [додатково]", ["tagshop", "system", "alerts"])
+sysb.row("Сповіщення (Prometheus rules → Alertmanager)")
+sysb.line([
+    (4, stat("Спрацювали (firing)", 'count(ALERTS{alertstate="firing"}) or vector(0)', "short", 0, FIRING)),
+    (4, stat("Очікують (pending)", 'count(ALERTS{alertstate="pending"}) or vector(0)', "short", 0)),
+    (16, ALERT_ROWS),
+], 6)
+sysb.line([(24, logs("Надіслані сповіщення (webhook → alert-logger)", '{service="alert-logger"} | json'))], 7)
+sysb.row("Обчислювальний вузол (node_exporter)")
+sysb.line([
+    (6, stat("CPU", '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m])))', "percent", 0, [
+        {"color": "green", "value": None}, {"color": "orange", "value": 70}, {"color": "red", "value": 90}])),
+    (6, stat("Пам'ять", '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)', "percent", 0, [
+        {"color": "green", "value": None}, {"color": "orange", "value": 70}, {"color": "red", "value": 90}])),
+    (6, stat("Load average (1 хв)", "node_load1", "short", 2)),
+    (6, stat("Час роботи", "time() - node_boot_time_seconds", "s", 0)),
+], 4)
+sysb.line([
+    (8, ts("CPU за режимами", ('sum by (mode) (rate(node_cpu_seconds_total{mode!="idle"}[1m]))', "{{mode}}"),
+           unit="short", stack=True, desc="Кількість ядер, зайнятих у кожному режимі")),
+    (8, ts("Пам'ять", ("node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "використано"),
+           ("node_memory_MemTotal_bytes", "усього"), unit="bytes")),
+    (8, ts("Мережа", ('sum(rate(node_network_receive_bytes_total{device!="lo"}[1m]))', "отримано"),
+           ('sum(rate(node_network_transmit_bytes_total{device!="lo"}[1m]))', "надіслано"), unit="Bps")),
+], 8)
+sysb.row("Контейнери (container-exporter, Docker API)")
+sysb.line([
+    (8, ts("CPU за контейнерами", ("rate(container_cpu_usage_seconds_total[1m])", "{{service}}"), unit="percentunit",
+           desc="1 = одне повністю зайняте ядро")),
+    (8, bars("Пам'ять за контейнерами", "container_memory_usage_bytes", "{{service}}", "bytes")),
+    (8, ts("Мережа за контейнерами (отримано)", ("rate(container_network_receive_bytes_total[1m])", "{{service}}"), unit="Bps")),
+], 9)
+sysb.row("nginx — gateway (nginx-prometheus-exporter)")
+sysb.line([
+    (4, stat("nginx", "nginx_up", "short", 0, [{"color": "red", "value": None}, {"color": "green", "value": 1}])),
+    (4, stat("Активні з'єднання", "nginx_connections_active", "short", 0)),
+    (8, ts("Запитів / с", ("rate(nginx_http_requests_total[1m])", "requests"), unit="reqps")),
+    (8, ts("З'єднання за станом", ("nginx_connections_reading", "reading"), ("nginx_connections_writing", "writing"),
+           ("nginx_connections_waiting", "waiting"), stack=True)),
+], 7)
+sysb.dump()
+
 print("ok:", [p.name for p in OUT.glob("*.json")])

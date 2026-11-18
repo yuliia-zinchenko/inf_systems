@@ -21,7 +21,7 @@ from faker import Faker
 
 import catalog
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://tagshop:tagshop@localhost:5433/tagshop")
+DSN = os.environ.get("DATABASE_URL", "postgresql://tagshop:tagshop@localhost:55432/tagshop")
 USERS = int(os.environ.get("SEED_USERS", 25))
 VIDEOS_PER_USER = int(os.environ.get("SEED_VIDEOS_PER_USER", 3))
 TAGS_PER_VIDEO = int(os.environ.get("SEED_TAGS_PER_VIDEO", 4))

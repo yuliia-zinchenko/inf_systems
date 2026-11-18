@@ -7,7 +7,7 @@ const { Pool } = pg;
 
 const connectionString =
   process.env.DATABASE_URL ??
-  'postgres://tagshop:tagshop@localhost:5433/tagshop';
+  'postgres://tagshop:tagshop@localhost:55432/tagshop';
 
 export const pool = new Pool({ connectionString });
 

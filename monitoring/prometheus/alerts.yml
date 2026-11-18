@@ -1,0 +1,134 @@
+# Alerting rules evaluated by Prometheus every evaluation_interval.
+# A rule is "pending" while its expression is true for less than `for`,
+# then "firing" and sent to Alertmanager.
+
+groups:
+  - name: database
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL недоступний"
+          description: "postgres_exporter не може підключитися до бази даних."
+
+      - alert: PostgresLowCacheHitRatio
+        expr: |
+          pg_stat_database_blks_hit{datname="tagshop"}
+            / clamp_min(pg_stat_database_blks_hit{datname="tagshop"} + pg_stat_database_blks_read{datname="tagshop"}, 1)
+            < 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Низький cache hit ratio PostgreSQL"
+          description: "Лише {{ $value | humanizePercentage }} блоків читається з кешу; бракує shared_buffers або запити читають забагато даних."
+
+      - alert: PostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks{datname="tagshop"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Взаємні блокування в PostgreSQL"
+          description: "За 5 хвилин зафіксовано {{ $value }} deadlock(ів)."
+
+      - alert: PostgresTooManyConnections
+        expr: sum(pg_stat_activity_count{datname="tagshop"}) > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Забагато з'єднань з PostgreSQL"
+          description: "{{ $value }} з'єднань (ліміт max_connections = 100)."
+
+      - alert: SlowSqlQueries
+        expr: histogram_quantile(0.95, sum by (le) (rate(db_query_duration_seconds_bucket[5m]))) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Повільні SQL-запити"
+          description: "95-й перцентиль часу SQL-запитів API — {{ $value | humanizeDuration }}."
+
+  - name: application
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Джерело метрик {{ $labels.job }} недоступне"
+          description: "Prometheus не може зібрати метрики з {{ $labels.instance }}."
+
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_request_duration_seconds_count[5m])), 1e-9)
+            > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Багато помилок 5xx в API"
+          description: "{{ $value | humanizePercentage }} запитів завершуються помилкою сервера."
+
+  - name: messaging
+    rules:
+      - alert: QueueWithoutConsumers
+        expr: rabbitmq_detailed_queue_consumers{queue=~"analytics.events|email.send"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Черга {{ $labels.queue }} без обробника"
+          description: "Worker не підписаний на чергу — повідомлення накопичуються."
+
+      - alert: QueueBacklog
+        expr: rabbitmq_detailed_queue_messages_ready{queue="analytics.events"} > 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Черга analytics.events росте"
+          description: "{{ $value }} повідомлень очікують обробки."
+
+      - alert: MessagesDeadLettered
+        expr: rabbitmq_detailed_queue_messages_ready{queue=~".*dlq"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Повідомлення в {{ $labels.queue }}"
+          description: "{{ $value }} повідомлень не вдалося обробити."
+
+  - name: host
+    rules:
+      - alert: HostHighCpu
+        expr: 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[2m]))) > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Високе навантаження на CPU"
+          description: "CPU зайнятий на {{ $value | printf \"%.0f\" }} %."
+
+      - alert: HostLowMemory
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Мало вільної пам'яті"
+          description: "Пам'ять зайнята на {{ $value | printf \"%.0f\" }} %."
+
+      - alert: NginxDown
+        expr: nginx_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "nginx (gateway) не відповідає"
+          description: "nginx-prometheus-exporter не може отримати stub_status."

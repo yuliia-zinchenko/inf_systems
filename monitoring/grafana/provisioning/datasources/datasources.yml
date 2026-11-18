@@ -26,6 +26,16 @@ datasources:
           url: "$${__value.raw}"
           urlDisplayLabel: Відкрити трейс
 
+  # [Додатково] Alerts from Alertmanager: Grafana → Alerting → Alert list (source "Alertmanager").
+  - name: Alertmanager
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false
+
   - name: Tempo
     uid: tempo
     type: tempo

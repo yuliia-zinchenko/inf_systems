@@ -184,6 +184,36 @@ def req9(admin: httpx.Client) -> None:
     check("повідомлення обробляються", rate > 0, f"{rate:.1f} повідомлень/с")
 
 
+def extra(admin: httpx.Client) -> None:
+    section("Додатково: сповіщення, моніторинг вузла й контейнерів, nginx")
+    groups = admin.get("/prometheus/api/v1/rules").json()["data"]["groups"]
+    rules = [r for g in groups for r in g["rules"]]
+    check("правила сповіщень завантажені в Prometheus", len(rules) >= 10 and all(r["health"] == "ok" for r in rules),
+          f"{len(rules)} правил у {len(groups)} групах")
+    firing = [r["name"] for r in rules if r["state"] == "firing"]
+    managers = admin.get("/prometheus/api/v1/alertmanagers").json()["data"]["activeAlertmanagers"]
+    check("Prometheus підключений до Alertmanager", bool(managers),
+          "зараз спрацювали: " + (", ".join(sorted(set(firing))) or "немає"))
+    r = admin.get("/alertmanager/-/ready")
+    check("Alertmanager працює", r.status_code == 200, f"HTTP {r.status_code}")
+
+    targets = admin.get("/prometheus/api/v1/targets").json()["data"]["activeTargets"]
+    health = {t["labels"]["job"]: t["health"] for t in targets}
+    for job, title in [("node", "метрики вузла (node_exporter)"), ("containers", "метрики контейнерів"),
+                       ("nginx", "метрики nginx")]:
+        check(f"{title} збираються", health.get(job) == "up", f"job {job}: {health.get(job, 'немає')}")
+
+    def value(expr: str) -> float:
+        res = admin.get("/prometheus/api/v1/query", params={"query": expr}).json()["data"]["result"]
+        return float(res[0]["value"][1]) if res else 0.0
+
+    check("видно ресурси вузла", value("node_memory_MemTotal_bytes") > 0,
+          f"CPU {value('100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))'):.0f} %, "
+          f"пам'ять {value('100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)'):.0f} %")
+    check("видно ресурси кожного контейнера", value("count(container_up == 1)") >= 10,
+          f"{value('count(container_up == 1)'):.0f} контейнерів")
+
+
 def main() -> None:
     print("TagShop · перевірка вимог лабораторної роботи")
     safe(req0)
@@ -194,6 +224,7 @@ def main() -> None:
     safe(req7)
     safe(req8)
     safe(lambda: req9(admin))
+    safe(lambda: extra(admin))
 
     passed = sum(results)
     print(f"\nПройдено {passed}/{len(results)} перевірок")

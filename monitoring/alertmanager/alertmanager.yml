@@ -1,0 +1,17 @@
+# Alertmanager receives firing alerts from Prometheus, groups them and routes
+# them to receivers. Here every alert goes to one receiver whose webhook logs
+# the notification (visible in Loki as {service="alert-logger"}); email,
+# Telegram or Slack receivers are configured the same way.
+
+route:
+  receiver: log
+  group_by: [alertname]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+
+receivers:
+  - name: log
+    webhook_configs:
+      - url: http://alert-logger:8080/
+        send_resolved: true

@@ -36,7 +36,7 @@ loki.source.docker "containers" {
 loki.process "levels" {
   // Our services (pino in Node, JSON in Python) log one JSON object per line.
   stage.match {
-    selector = "{service=~\"api|worker|auth-service\"}"
+    selector = "{service=~\"api|worker|auth-service|alert-logger\"}"
 
     stage.json {
       expressions = { level = "level", trace_id = "trace_id" }

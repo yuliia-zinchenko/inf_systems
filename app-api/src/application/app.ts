@@ -19,6 +19,12 @@ import { httpLogger } from './logger.ts';
 export const app = express();
 
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+const isProd = process.env.NODE_ENV === 'production';
+
+// In development the frontend runs on whichever localhost port is free (3000, 3001, …),
+// so any localhost origin is allowed; production accepts only FRONTEND_URL.
+const LOCALHOST_ORIGIN = /^http:\/\/localhost:\d+$/;
+const corsOrigin = isProd ? FRONTEND_URL : [FRONTEND_URL, LOCALHOST_ORIGIN];
 
 app.set('trust proxy', 1);
 
@@ -33,7 +39,7 @@ app.use(
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: corsOrigin,
     credentials: true,
   }),
 );

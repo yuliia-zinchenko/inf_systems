@@ -27,7 +27,7 @@ from prometheus_client import Counter, Histogram, start_http_server
 import catalog
 
 API_URL = os.environ.get("API_URL", "http://localhost:4000/api")
-DSN = os.environ.get("DATABASE_URL", "postgresql://tagshop:tagshop@localhost:5433/tagshop")
+DSN = os.environ.get("DATABASE_URL", "postgresql://tagshop:tagshop@localhost:55432/tagshop")
 RPS = float(os.environ.get("LOAD_RPS", 5))
 WORKERS = int(os.environ.get("LOAD_WORKERS", 4))
 SEED_USERS = int(os.environ.get("SEED_USERS", 25))
